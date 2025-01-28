@@ -39,7 +39,7 @@ variable "private_key_path" {
   type = string
   description = "The path to store the private key used to access the VM"
   nullable = false
-  default = "../"
+  default = "../ansible/"
 }
 
 variable "additional_packages" {

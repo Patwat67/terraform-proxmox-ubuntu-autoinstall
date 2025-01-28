@@ -152,6 +152,7 @@ resource "local_file" "ansible_vars" {
 }
 
 resource "local_sensitive_file" "private_key" {
-  content = tls_private_key.key.public_key_openssh
+  content = tls_private_key.key.private_key_pem
   filename = "${var.private_key_path}${var.vm_name}-private_key.pem"
+  file_permission = 700
 }
