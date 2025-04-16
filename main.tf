@@ -1,10 +1,10 @@
 resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
   content_type = "snippets"
-  datastore_id = "NAS"
-  node_name = "pve"
+  datastore_id = var.snippet_store
+  node_name = var.proxmox_node
 
   source_raw {
-    data = <<-EOF
+    data = <<-DOC
     #cloud-config
     bootcmd: 
         - cat /proc/cmdline > /tmp/cmdline
@@ -13,7 +13,7 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
     autoinstall:
         # Documentation (Its really good) https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
         version: 1
-        locale: "en_US.UTF-8"
+        locale: ${var.vm_locale}
         # Updates installer
         refresh-installer:
             update: ${var.autoinstall_updates.installer}
@@ -21,30 +21,39 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
         drivers:
             install: ${var.autoinstall_updates.drivers}
         keyboard:
-            layout: us
+            layout: ${var.vm_keyboard_layout}
         # Provisions disks 
         storage:
             layout:
                 name: lvm
                 sizing-policy: all # Allocates all remaining storage to root dir
-                # password: LUKS PASSPHRASE
+                ${format("password: %s", coalesce(var.LUKS_passphrase, "~"))}
+        user-data:
+            users:
+                - name: ${var.vm_username}
+                gecos: "Terraform"
+                primary_group: ${var.vm_username}
+                groups: ${length(var.vm_user_groups) > 0 ? join(",", var.vm_user_groups) : []}
+                shell: /bin/bash
+                lock_passwd: True
+                passwd: ${htpasswd_password.hash.sha512}
+                sudo: ALL=(ALL) NOPASSWD:ALL
+                ssh_import_id: ${length(var.vm_ssh_import_id) > 0 ? var.vm_ssh_import_id : []}
+                ssh_authorized_keys: ${length(var.vm_authorized_keys) > 0 ? concat(var.vm_authorized_keys, [tls_private_key.key.public_key_openssh]) : tls_private_key.key.public_key_openssh}
         identity:
             username: ${var.vm_username}
             password: ${htpasswd_password.hash.sha512}
             hostname: ${var.vm_name}
-        ssh:
-            install-server: true
-            authorized-keys: [${tls_private_key.key.public_key_openssh}]
-            allow-pw: false
+
         late-commands:
             - curtin in-target -- apt-get update
             - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
             - curtin in-target -- systemctl start qemu-guest-agent
             - curtin in-target -- systemctl enable qemu-guest-agent
-        timezone: America/New_York
+        timezone: ${var.vm_timezone}
         updates: ${var.autoinstall_updates.packages}
-        shutdown: reboot # or poweroff
-    EOF 
+        shutdown: reboot # must be reboot so that qemu guest agent works
+    DOC
     file_name = "${var.vm_name}-user-data-cloud-config.yaml"
   }
   depends_on = [ htpasswd_password.hash, tls_private_key.key ]
@@ -53,14 +62,14 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
 resource "proxmox_virtual_environment_vm" "vm" {
     vm_id       = var.vm_id
     description = "Terraform"
-    node_name   = "pve"
+    node_name   = var.proxmox_node
     name        = var.vm_name
+    tags        = var.vm_tags
 
-    # Legacy (will not support modern features like EFI/PCIe passthrough)
     machine     = "q35"
     bios        = "ovmf"
 
-    keyboard_layout = "en-us"
+    keyboard_layout = var.proxmox_keyboard_layout
 
     operating_system {
         type = "l26"
@@ -69,7 +78,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
     # QEMU Guest agent
     agent {
         enabled = true
-        timeout = "10m"
+        timeout = "${var.vm_creation_timeout}}m"
     }
     # stop_on_destroy = true
 
@@ -80,17 +89,17 @@ resource "proxmox_virtual_environment_vm" "vm" {
 
     memory {
         dedicated = var.vm_hardware.memory
-        floating  = var.vm_hardware.memory # Set equal enables ballooning
+        floating  = var.vm_ballooning_memory == true ? var.vm_hardware.memory : 0
     }
 
     cdrom {
         enabled = true
-        file_id = "local:iso/ubuntu-24.04.1-live-server-amd64.iso"
+        file_id = var.vm_image
         interface = "ide0"
     }
 
     efi_disk {
-        datastore_id = "store"
+        datastore_id = var.datastore_id
         file_format = "raw"
         type = "4m"
     }
@@ -98,13 +107,12 @@ resource "proxmox_virtual_environment_vm" "vm" {
     boot_order = ["scsi0", "ide0"]
     scsi_hardware = "virtio-scsi-single"
     disk {
-        datastore_id = "store"
+        datastore_id = var.datastore_id
         interface    = "scsi0"
         aio = "threads"
         iothread = true
         file_format = "raw"
         size = var.vm_hardware.disk_size
-        ssd = true
     }
 
     network_device {
@@ -114,7 +122,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
 
     initialization {
         dns {
-            servers = ["10.0.0.1"]
+            servers = [var.vm_gateway]
         }
         ip_config {
             ipv4 {
@@ -140,19 +148,30 @@ resource "tls_private_key" "key" {
     rsa_bits  = 2048
 }
 
-resource "local_file" "ansible_vars" {
+resource "local_sensitive_file" "info" {
     content = <<-DOC
-        # Ansible vars_file containing variable values from Terraform.
-        ${var.vm_name}_ipv4: ${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]}
-        ${var.vm_name}_user: ${var.vm_username}
-        ${var.vm_name}_vm_pass: ${random_password.password.result}
-        ${var.vm_name}_vm_key: ${tls_private_key.key.private_key_pem}
-        DOC
-    filename = "../ansible/${var.vm_name}_tf_ansible_vars_file.yaml"
+        id: ${var.vm_id}
+        name: ${var.vm_name}
+
+        ipv4: ${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]}
+        user: ${var.vm_username}
+        pass: ${random_password.password.result}
+    DOC
+    filename = "${path.module}/${var.output_dir}/${var.vm_name}/info.txt"
+    file_permission = 700
 }
 
 resource "local_sensitive_file" "private_key" {
   content = tls_private_key.key.private_key_pem
-  filename = "${var.private_key_path}${var.vm_name}-private_key.pem"
+  filename = "${path.module}/${var.output_dir}/${var.vm_name}/private-key.pem"
   file_permission = 700
+}
+
+resource "local_sensitive_file" "connect" {
+    content = <<-DOC
+    #!/bin/bash
+    ssh ${var.vm_name}@${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]} -i ${path.module}/${var.output_dir}/${var.vm_name}/private-key.pem
+    DOC
+    filename = "${path.module}/${var.output_dir}/${var.vm_name}/connect.sh"
+    file_permission = 700
 }
