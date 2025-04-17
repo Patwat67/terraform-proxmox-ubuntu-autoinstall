@@ -10,11 +10,3 @@ terraform {
     }
   }
 }
-
-provider "proxmox" {
-}
-
-provider "htpasswd" {
-  alias = "password"
-  # Docs: https://registry.terraform.io/providers/loafoe/htpasswd/latest/docs
-}

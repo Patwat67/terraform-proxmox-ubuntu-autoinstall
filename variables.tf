@@ -93,17 +93,11 @@ variable "vm_hardware" {
   }
 }
 
-variable "output_dir" {
-  type = string
-  description = "Directory for which generated info files should go relative to the module"
-  default = "/vm-info"
-  nullable = false
-}
-
 variable "LUKS_passphrase" {
   type = string
   description = "Passphrase used for LUKS disk encryption"
   nullable = true
+  default = null
 }
 
 variable "vm_locale" {
@@ -148,12 +142,14 @@ variable "vm_ssh_import_id" {
   type = list
   description = "List of ssh_import_id arguments [gh:username, lp:usename, etc.]"
   nullable = true
+  default = []
 }
 
 variable "vm_authorized_keys" {
   type = list
   description = "List of keys to add to the users authorized_keys file"
   nullable = true
+  default = []
 }
 
 variable "vm_user_groups" {

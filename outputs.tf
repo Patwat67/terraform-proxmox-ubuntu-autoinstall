@@ -13,7 +13,7 @@ output "password" {
     sensitive = true
 }
 
-output "vm_name" {
-    value = var.vm_name
+output "vm_username" {
+    value = var.vm_username
     sensitive = false
 }

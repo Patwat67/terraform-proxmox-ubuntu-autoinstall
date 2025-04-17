@@ -7,9 +7,9 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
     data = <<-DOC
     #cloud-config
     bootcmd: 
-        - cat /proc/cmdline > /tmp/cmdline
-        - sed -i'' 's/$/ autoinstall/g' /tmp/cmdline
-        - mount -n --bind -o ro /tmp/cmdline /proc/cmdline
+        - "cat /proc/cmdline > /tmp/cmdline"
+        - "sed -i'' 's/$/ autoinstall/g' /tmp/cmdline"
+        - "mount -n --bind -o ro /tmp/cmdline /proc/cmdline"
     autoinstall:
         # Documentation (Its really good) https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
         version: 1
@@ -17,7 +17,7 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
         # Updates installer
         refresh-installer:
             update: ${var.autoinstall_updates.installer}
-            channel: lastest/edge
+            channel: latest/edge
         drivers:
             install: ${var.autoinstall_updates.drivers}
         keyboard:
@@ -27,33 +27,30 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
             layout:
                 name: lvm
                 sizing-policy: all # Allocates all remaining storage to root dir
-                ${format("password: %s", coalesce(var.LUKS_passphrase, "~"))}
+                # ${var.LUKS_passphrase != null ? "password: ${var.LUKS_passphrase}" : "erm"}
         user-data:
             users:
-                - name: ${var.vm_username}
+              - name: ${var.vm_username}
                 gecos: "Terraform"
                 primary_group: ${var.vm_username}
-                groups: ${length(var.vm_user_groups) > 0 ? join(",", var.vm_user_groups) : []}
+                groups: ${length(var.vm_user_groups) > 0 ? join(",", var.vm_user_groups) : "[]"}
                 shell: /bin/bash
-                lock_passwd: True
+                lock_passwd: ${var.vm_lock_passwd}
                 passwd: ${htpasswd_password.hash.sha512}
                 sudo: ALL=(ALL) NOPASSWD:ALL
-                ssh_import_id: ${length(var.vm_ssh_import_id) > 0 ? var.vm_ssh_import_id : []}
-                ssh_authorized_keys: ${length(var.vm_authorized_keys) > 0 ? concat(var.vm_authorized_keys, [tls_private_key.key.public_key_openssh]) : tls_private_key.key.public_key_openssh}
-        identity:
-            username: ${var.vm_username}
-            password: ${htpasswd_password.hash.sha512}
-            hostname: ${var.vm_name}
-
+                ssh_import_id: ${length(var.vm_ssh_import_id) > 0 ? "[${join(",", var.vm_ssh_import_id)}]" : "[]"}
+                ssh_authorized_keys: ${length(var.vm_authorized_keys) > 0 ? "[${trimspace(join(",", concat(var.vm_authorized_keys, [tls_private_key.key.public_key_openssh])))}]" : "[${trimspace(tls_private_key.key.public_key_openssh)}]"}
         late-commands:
-            - curtin in-target -- apt-get update
+            - echo ${var.vm_name} > /target/etc/hostname
+            - echo "127.0.1.1 ${var.vm_name} ${var.vm_name}" > /target/etc/hosts
+            - curtin in-target -- bash -c 'mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication no" | tee /etc/ssh/sshd_config.d/no_passwd_auth.conf'            - curtin in-target -- apt-get update
             - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
             - curtin in-target -- systemctl start qemu-guest-agent
             - curtin in-target -- systemctl enable qemu-guest-agent
         timezone: ${var.vm_timezone}
         updates: ${var.autoinstall_updates.packages}
         shutdown: reboot # must be reboot so that qemu guest agent works
-    DOC
+        DOC
     file_name = "${var.vm_name}-user-data-cloud-config.yaml"
   }
   depends_on = [ htpasswd_password.hash, tls_private_key.key ]
@@ -78,7 +75,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
     # QEMU Guest agent
     agent {
         enabled = true
-        timeout = "${var.vm_creation_timeout}}m"
+        timeout = "${var.vm_creation_timeout}m"
     }
     # stop_on_destroy = true
 
@@ -93,14 +90,14 @@ resource "proxmox_virtual_environment_vm" "vm" {
     }
 
     cdrom {
-        enabled = true
-        file_id = var.vm_image
+        enabled   = true
+        file_id   = var.vm_image
         interface = "ide0"
     }
 
     efi_disk {
         datastore_id = var.datastore_id
-        file_format = "raw"
+        file_format  = "raw"
         type = "4m"
     }
 
@@ -109,15 +106,15 @@ resource "proxmox_virtual_environment_vm" "vm" {
     disk {
         datastore_id = var.datastore_id
         interface    = "scsi0"
-        aio = "threads"
-        iothread = true
-        file_format = "raw"
-        size = var.vm_hardware.disk_size
+        aio          = "threads"
+        iothread     = true
+        file_format  = "raw"
+        size         = var.vm_hardware.disk_size
     }
 
     network_device {
         enabled = true
-        model = "virtio"
+        model   = "virtio"
     }
 
     initialization {
@@ -135,8 +132,8 @@ resource "proxmox_virtual_environment_vm" "vm" {
 }
 
 resource "random_password" "password" {
-    length           = 14
-    special          = true
+    length  = 14
+    special = true
 }
 
 resource "htpasswd_password" "hash" {
@@ -157,21 +154,26 @@ resource "local_sensitive_file" "info" {
         user: ${var.vm_username}
         pass: ${random_password.password.result}
     DOC
-    filename = "${path.module}/${var.output_dir}/${var.vm_name}/info.txt"
+    filename = "${path.root}/${var.vm_name}/info.txt"
     file_permission = 700
 }
 
 resource "local_sensitive_file" "private_key" {
   content = tls_private_key.key.private_key_pem
-  filename = "${path.module}/${var.output_dir}/${var.vm_name}/private-key.pem"
+  filename = "${path.root}/${var.vm_name}/private-key.pem"
   file_permission = 700
 }
 
 resource "local_sensitive_file" "connect" {
     content = <<-DOC
     #!/bin/bash
-    ssh ${var.vm_name}@${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]} -i ${path.module}/${var.output_dir}/${var.vm_name}/private-key.pem
+    ssh ${var.vm_username}@${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]} -i "$DIR/private-key.pem"
     DOC
-    filename = "${path.module}/${var.output_dir}/${var.vm_name}/connect.sh"
+    filename = "${path.root}/${var.vm_name}/connect.sh"
     file_permission = 700
+}
+
+resource "local_file" "waga" {
+    content = proxmox_virtual_environment_file.user_data_cloud_config.source_raw[0].data
+    filename = "${path.root}/test.txt"
 }
