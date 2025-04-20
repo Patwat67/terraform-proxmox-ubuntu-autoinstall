@@ -1,0 +1,10 @@
+id: ${vm_id}
+hostname: ${vm_name}
+ipv4: ${ip}
+
+user-data:
+%{ for name, data in user-data }
+  - username: ${data.username}
+    password: ${data.plaintext_password}
+
+%{ endfor ~}

@@ -31,19 +31,13 @@ variable "snippet_store" {
   nullable = false
 }
 
-variable "vm_username" {
-    type = string
-    description = "The username used by the main VM user"
-    nullable = false
-}
-
 variable "vm_id" {
     type = number
     description = "The ID of the VM to be created"
     nullable = false
 }
 
-variable "vm_name" {
+variable "vm_hostname" {
     type = string
     description = "The name of the VM to be created"
     nullable = false
@@ -138,26 +132,6 @@ variable "vm_keyboard_layout" {
   nullable = false
 }
 
-variable "vm_ssh_import_id" {
-  type = list
-  description = "List of ssh_import_id arguments [gh:username, lp:usename, etc.]"
-  nullable = true
-  default = []
-}
-
-variable "vm_authorized_keys" {
-  type = list
-  description = "List of keys to add to the users authorized_keys file"
-  nullable = true
-  default = []
-}
-
-variable "vm_user_groups" {
-  type = list
-  description = "List of groups to assign the vm user [sudo, adm, docker]"
-  nullable = true
-}
-
 variable "vm_tags" {
   type = list
   description = "List of tags to add to the VM within Proxmox"
@@ -173,7 +147,7 @@ variable "proxmox_keyboard_layout" {
 variable "vm_creation_timeout" {
   type = number
   description = "How long to wait in minutes for the VM to respond to qemu requests before terminating"
-  default = 10
+  default = 15
 }
 
 variable "vm_ballooning_memory" {
@@ -182,8 +156,23 @@ variable "vm_ballooning_memory" {
   default = true
 }
 
-variable "vm_lock_passwd" {
-  type = bool
-  description = "Locks the users passwd"
-  default = false
+variable "vm_information_files_dir" {
+  type = string
+  description = "Directory to store vm_information_files, leave null to store in root"
+  nullable = true
+  default = null
+}
+
+variable "user_data" {
+  type = list(
+      object({
+        username = optional(string, "ubuntu")
+        user_groups = optional(list(string), ["adm","cdrom","lpadmin","sudo","sambashare","dip","plugdev"])
+        lock_passwd = optional(bool, false)
+        ssh_import_ids = optional(list(string), null)
+        authorized_keys = optional(list(string), [])
+      })
+    )
+  description = "Configures the user-data section of the VMs cloud-config, see documentation"
+  nullable = false
 }

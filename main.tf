@@ -1,57 +1,49 @@
+locals {
+  user_keys = [
+    for idx, user in var.user_data :
+    contains(keys(user), "username") && user.username != "" ? user.username : "user-${idx}"
+  ]
+
+  password_map = {
+    for idx, key in local.user_keys :
+    key => random_password.password[idx].result
+  }
+
+  password_hash_map = {
+    for key in local.user_keys :
+    key => htpasswd_password.hash[key].sha512
+  }
+
+  user_data = [
+    for idx, user in var.user_data : merge(user, {
+      key                = local.user_keys[idx]
+      password           = local.password_hash_map[local.user_keys[idx]]
+      plaintext_password = local.password_map[local.user_keys[idx]]
+    })
+  ]
+}
+
+
 resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
   content_type = "snippets"
   datastore_id = var.snippet_store
   node_name = var.proxmox_node
 
   source_raw {
-    data = <<-DOC
-    #cloud-config
-    bootcmd: 
-        - "cat /proc/cmdline > /tmp/cmdline"
-        - "sed -i'' 's/$/ autoinstall/g' /tmp/cmdline"
-        - "mount -n --bind -o ro /tmp/cmdline /proc/cmdline"
-    autoinstall:
-        # Documentation (Its really good) https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
-        version: 1
-        locale: ${var.vm_locale}
-        # Updates installer
-        refresh-installer:
-            update: ${var.autoinstall_updates.installer}
-            channel: latest/edge
-        drivers:
-            install: ${var.autoinstall_updates.drivers}
-        keyboard:
-            layout: ${var.vm_keyboard_layout}
-        # Provisions disks 
-        storage:
-            layout:
-                name: lvm
-                sizing-policy: all # Allocates all remaining storage to root dir
-                # ${var.LUKS_passphrase != null ? "password: ${var.LUKS_passphrase}" : "erm"}
-        user-data:
-            users:
-              - name: ${var.vm_username}
-                gecos: "Terraform"
-                primary_group: ${var.vm_username}
-                groups: ${length(var.vm_user_groups) > 0 ? join(",", var.vm_user_groups) : "[]"}
-                shell: /bin/bash
-                lock_passwd: ${var.vm_lock_passwd}
-                passwd: ${htpasswd_password.hash.sha512}
-                sudo: ALL=(ALL) NOPASSWD:ALL
-                ssh_import_id: ${length(var.vm_ssh_import_id) > 0 ? "[${join(",", var.vm_ssh_import_id)}]" : "[]"}
-                ssh_authorized_keys: ${length(var.vm_authorized_keys) > 0 ? "[${trimspace(join(",", concat(var.vm_authorized_keys, [tls_private_key.key.public_key_openssh])))}]" : "[${trimspace(tls_private_key.key.public_key_openssh)}]"}
-        late-commands:
-            - echo ${var.vm_name} > /target/etc/hostname
-            - echo "127.0.1.1 ${var.vm_name} ${var.vm_name}" > /target/etc/hosts
-            - curtin in-target -- bash -c 'mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication no" | tee /etc/ssh/sshd_config.d/no_passwd_auth.conf'            - curtin in-target -- apt-get update
-            - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
-            - curtin in-target -- systemctl start qemu-guest-agent
-            - curtin in-target -- systemctl enable qemu-guest-agent
-        timezone: ${var.vm_timezone}
-        updates: ${var.autoinstall_updates.packages}
-        shutdown: reboot # must be reboot so that qemu guest agent works
-        DOC
-    file_name = "${var.vm_name}-user-data-cloud-config.yaml"
+    data = templatefile("${path.module}/templates/cloud-config.tftpl", {
+
+        user-data = local.user_data
+
+        tls_public_key = tls_private_key.key.public_key_openssh
+
+        vm_name = var.vm_hostname
+        vm_locale = var.vm_locale
+        vm_timezone = var.vm_timezone
+        autoinstall_updates = var.autoinstall_updates
+        vm_keyboard_layout = var.vm_keyboard_layout
+        LUKS_passphrase = var.LUKS_passphrase
+    })
+    file_name = "${var.vm_hostname}-user-data-cloud-config.yaml"
   }
   depends_on = [ htpasswd_password.hash, tls_private_key.key ]
 }
@@ -60,7 +52,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
     vm_id       = var.vm_id
     description = "Terraform"
     node_name   = var.proxmox_node
-    name        = var.vm_name
+    name        = var.vm_hostname
     tags        = var.vm_tags
 
     machine     = "q35"
@@ -132,12 +124,17 @@ resource "proxmox_virtual_environment_vm" "vm" {
 }
 
 resource "random_password" "password" {
+    count = length(var.user_data)
     length  = 14
     special = true
 }
 
 resource "htpasswd_password" "hash" {
-  password = random_password.password.result
+    for_each = {
+        for idx, pw in random_password.password :
+        var.user_data[idx].username => pw
+    }
+    password = each.value.result
 }
 
 resource "tls_private_key" "key" {
@@ -146,34 +143,37 @@ resource "tls_private_key" "key" {
 }
 
 resource "local_sensitive_file" "info" {
-    content = <<-DOC
-        id: ${var.vm_id}
-        name: ${var.vm_name}
+    count = 1
+    content = templatefile("${path.module}/templates/info.tftpl", {
+        vm_id = var.vm_id
+        vm_name = var.vm_hostname
+        ip = proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]
 
-        ipv4: ${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]}
-        user: ${var.vm_username}
-        pass: ${random_password.password.result}
-    DOC
-    filename = "${path.root}/${var.vm_name}/info.txt"
+        user-data = local.user_data
+    })
+    filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/info.txt" : "${var.vm_information_files_dir}/${var.vm_hostname}/info.txt"
     file_permission = 700
 }
 
 resource "local_sensitive_file" "private_key" {
+  count = 1
   content = tls_private_key.key.private_key_pem
-  filename = "${path.root}/${var.vm_name}/private-key.pem"
+  filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/private-key.pem" : "${var.vm_information_files_dir}/${var.vm_hostname}/private-key.pem"
   file_permission = 700
 }
 
-resource "local_sensitive_file" "connect" {
-    content = <<-DOC
-    #!/bin/bash
-    ssh ${var.vm_username}@${proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]} -i "$DIR/private-key.pem"
-    DOC
-    filename = "${path.root}/${var.vm_name}/connect.sh"
-    file_permission = 700
-}
+resource "local_file" "cloud_config" {
+  content = templatefile("${path.module}/templates/cloud-config.tftpl", {
+        user-data = local.user_data
 
-resource "local_file" "waga" {
-    content = proxmox_virtual_environment_file.user_data_cloud_config.source_raw[0].data
-    filename = "${path.root}/test.txt"
+        tls_public_key = tls_private_key.key.public_key_openssh
+
+        vm_name = var.vm_hostname
+        vm_locale = var.vm_locale
+        vm_timezone = var.vm_timezone
+        autoinstall_updates = var.autoinstall_updates
+        vm_keyboard_layout = var.vm_keyboard_layout
+        LUKS_passphrase = var.LUKS_passphrase
+    })
+    filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/cloud-config.txt" : "${var.vm_information_files_dir}/${var.vm_hostname}/cloud-config.txt"
 }
