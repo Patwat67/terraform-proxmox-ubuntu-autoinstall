@@ -1,51 +1,92 @@
 #cloud-config
-    bootcmd: 
-        - "cat /proc/cmdline > /tmp/cmdline"
-        - "sed -i'' 's/$/ autoinstall/g' /tmp/cmdline"
-        - "mount -n --bind -o ro /tmp/cmdline /proc/cmdline"
-    autoinstall:
-        # Documentation (Its really good) https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
-        version: 1
-        locale: ${vm_locale}
-        # Updates installer
-        refresh-installer:
-            update: ${autoinstall_updates.installer}
-            channel: latest/edge
-        drivers:
-            install: ${autoinstall_updates.drivers}
-        keyboard:
-            layout: ${vm_keyboard_layout}
-        # Provisions disks 
-        storage:
-            layout:
-                name: lvm
-                sizing-policy: all 
-%{if LUKS_passphrase != null}
-                password: ${LUKS_passphrase}
-%{ endif ~}
-        user-data:
-            users:
-%{ for name, data in user-data ~}
-              - name: ${data.username}
-                gecos: "Terraform"
-                primary_group: ${data.username}
-                groups: ${length(data.user_groups) > 0 ? join(",", data.user_groups) : "[]"}
-                shell: /bin/bash
-                lock_passwd: ${data.lock_passwd}
-                passwd: ${data.password}
-                sudo: ALL=(ALL) NOPASSWD:ALL
-%{if data.ssh_import_ids != null}
-                ssh_import_id: ${"[${trimspace(join(",", data.ssh_import_ids))}]"}
-%{ endif ~}
-                ssh_authorized_keys: ${length(data.authorized_keys) > 0 ? "[${trimspace(join(",", concat(data.authorized_keys, [tls_public_key])))}]" : "[${trimspace(tls_public_key)}]"}
+bootcmd: 
+  - "cat /proc/cmdline > /tmp/cmdline"
+  - "sed -i'' 's/$/ autoinstall/g' /tmp/cmdline"
+  - "mount -n --bind -o ro /tmp/cmdline /proc/cmdline"
+
+autoinstall:
+  version: 1
+  locale: ${vm_locale}
+
+  refresh-installer:
+    update: ${autoinstall_updates.installer}
+    channel: latest/edge
+
+  drivers:
+    install: true
+
+  network:
+    version: 2
+    ethernets:
+      eth0:
+        match:
+            name: "*"
+        set-name: "eth0"
+%{ if ipv4 != "dhcp" }
+        addresses:
+          - ${ipv4}
+        gateway4: ${gateway}
+        dhcp4: false
+%{ else }
+        dhcp4: true
+%{ endif }
+        nameservers:
+%{ if domains != null }
+          search:
+%{ for d in domains ~}
+            - ${d}
 %{ endfor ~}
-        late-commands:
-            - echo ${vm_name} > /target/etc/hostname
-            - echo "127.0.1.1 ${vm_name} ${vm_name}" > /target/etc/hosts
-            - curtin in-target -- bash -c 'mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication no" | tee /etc/ssh/sshd_config.d/no_passwd_auth.conf'            - curtin in-target -- apt-get update
-            - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
-            - curtin in-target -- systemctl start qemu-guest-agent
-            - curtin in-target -- systemctl enable qemu-guest-agent
-        timezone: ${vm_timezone}
-        updates: ${autoinstall_updates.packages}
-        shutdown: reboot # must be reboot so that qemu guest agent works
+%{ endif }
+          addresses:
+%{ for ns in dns ~}
+            - ${ns}
+%{ endfor ~}
+
+  keyboard:
+    layout: ${vm_keyboard_layout} 
+
+  storage:
+    layout:
+      name: lvm
+      sizing-policy: all
+%{ if LUKS_passphrase != null }
+      password: ${LUKS_passphrase}
+%{ endif }
+
+  user-data:
+    users:
+%{ for name, data in user-data ~}
+      - name: ${data.username}
+        gecos: "Terraform"
+        primary_group: ${data.username}
+%{ if length(data.user_groups) > 0 }
+        groups: ${join(",", data.user_groups)}
+%{ endif }
+        shell: /bin/bash
+        lock_passwd: ${data.lock_passwd}
+        passwd: ${data.password}
+        sudo: ALL=(ALL) NOPASSWD:ALL
+%{ if data.ssh_import_ids != null }
+        ssh_import_id:
+%{ for id in data.ssh_import_ids ~}
+          - ${id}
+%{ endfor ~}
+%{ endif }
+        ssh_authorized_keys:
+%{ for key in concat(data.authorized_keys, [tls_public_key]) ~}
+          - ${key}
+%{ endfor ~}
+%{ endfor ~}
+
+  late-commands:
+    - echo ${vm_name} > /target/etc/hostname
+    - echo "127.0.1.1 ${vm_name} ${vm_name}" > /target/etc/hosts
+    - curtin in-target -- bash -c 'mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication no" | tee /etc/ssh/sshd_config.d/no_passwd_auth.conf'
+    - curtin in-target -- apt-get update
+    - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
+    - curtin in-target -- systemctl start qemu-guest-agent
+    - curtin in-target -- systemctl enable qemu-guest-agent
+
+  timezone: ${vm_timezone}
+  updates: ${autoinstall_updates.packages}
+  shutdown: reboot

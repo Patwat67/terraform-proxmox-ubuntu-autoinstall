@@ -53,11 +53,10 @@ variable "additional_packages" {
 variable "autoinstall_updates" {
   type = object({
     installer = bool
-    drivers = bool
     packages = string
   })
-  description = "Wether or not to update the installer, drivers, and/or packages."
-  default = {installer = true, drivers = true, packages = "all"}
+  description = "Wether or not to update the installer and/or packages."
+  default = {installer = true, packages = "all"}
   nullable = false
   validation {
     condition = contains(["all", "security"], var.autoinstall_updates.packages)
@@ -114,9 +113,20 @@ variable "datastore_id" {
   nullable = false
 }
 
-variable "vm_gateway" {
-  type = string
-  description = "IP address of the gateway the VM should use to get dhcp from"
+variable "vm_network" {
+  type = object({
+    ipv4 = string
+    gateway4 = string
+    dns_servers = optional(list(string), ["8.8.8.8"])
+    dns_domains = optional(list(string), null)
+  })
+  description = "VMs network settings, set ipv4 to 'dhcp' to automatically assign an IP"
+  default = {
+    ipv4 = "dhcp"
+    gateway4 = ""
+    dns_servers = [ "8.8.8.8" ]
+    dns_domains = null
+  }
   nullable = false
 }
 

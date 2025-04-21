@@ -31,17 +31,19 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
 
   source_raw {
     data = templatefile("${path.module}/templates/cloud-config.tftpl", {
-
         user-data = local.user_data
-
         tls_public_key = tls_private_key.key.public_key_openssh
-
         vm_name = var.vm_hostname
         vm_locale = var.vm_locale
         vm_timezone = var.vm_timezone
         autoinstall_updates = var.autoinstall_updates
         vm_keyboard_layout = var.vm_keyboard_layout
         LUKS_passphrase = var.LUKS_passphrase
+
+        ipv4 = var.vm_network.ipv4
+        gateway = var.vm_network.gateway4
+        domains = var.vm_network.dns_domains
+        dns = var.vm_network.dns_servers
     })
     file_name = "${var.vm_hostname}-user-data-cloud-config.yaml"
   }
@@ -110,14 +112,6 @@ resource "proxmox_virtual_environment_vm" "vm" {
     }
 
     initialization {
-        dns {
-            servers = [var.vm_gateway]
-        }
-        ip_config {
-            ipv4 {
-                address = "dhcp"
-            }
-        }
         user_data_file_id = proxmox_virtual_environment_file.user_data_cloud_config.id
     } 
     depends_on = [ proxmox_virtual_environment_file.user_data_cloud_config ]
@@ -165,15 +159,18 @@ resource "local_sensitive_file" "private_key" {
 resource "local_file" "cloud_config" {
   content = templatefile("${path.module}/templates/cloud-config.tftpl", {
         user-data = local.user_data
-
         tls_public_key = tls_private_key.key.public_key_openssh
-
         vm_name = var.vm_hostname
         vm_locale = var.vm_locale
         vm_timezone = var.vm_timezone
         autoinstall_updates = var.autoinstall_updates
         vm_keyboard_layout = var.vm_keyboard_layout
         LUKS_passphrase = var.LUKS_passphrase
+
+        ipv4 = var.vm_network.ipv4
+        gateway = var.vm_network.gateway4
+        domains = var.vm_network.dns_domains
+        dns = var.vm_network.dns_servers
     })
     filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/cloud-config.txt" : "${var.vm_information_files_dir}/${var.vm_hostname}/cloud-config.txt"
 }
