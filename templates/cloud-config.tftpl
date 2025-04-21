@@ -86,6 +86,9 @@ autoinstall:
     - curtin in-target -- apt-get install -y qemu-guest-agent ssh-import-id python3
     - curtin in-target -- systemctl start qemu-guest-agent
     - curtin in-target -- systemctl enable qemu-guest-agent
+    - curtin in-target -- systemctl disable systemd-networkd-wait-online.service
+    - curtin in-target -- systemctl mask systemd-networkd-wait-online.service
+
 
   timezone: ${vm_timezone}
   updates: ${autoinstall_updates.packages}
