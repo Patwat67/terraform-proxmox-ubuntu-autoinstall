@@ -18,28 +18,36 @@ autoinstall:
   network:
     version: 2
     ethernets:
-      eth0:
+%{ for name, data in networks}
+      ${data.interface_name}:
         match:
-            name: "*"
-        set-name: "eth0"
-%{ if ipv4 != "dhcp" }
+            macaddress: ${data.mac}
+        set-name: ${data.interface_name}
+%{ if data.ipv4 != "dhcp" }
         addresses:
-          - ${ipv4}
-        gateway4: ${gateway}
+          - ${data.ipv4}
+%{ if data.gateway4 != null }
+        gateway4: ${data.gateway4}
+%{ endif }
         dhcp4: false
 %{ else }
         dhcp4: true
 %{ endif }
+%{ if data.dns_domains != null || data.dns_domains != null }
         nameservers:
-%{ if domains != null }
+%{ if data.dns_domains != null }
           search:
-%{ for d in domains ~}
+%{ for d in data.dns_domains ~}
             - ${d}
 %{ endfor ~}
 %{ endif }
+%{ if data.dns_servers != null }
           addresses:
-%{ for ns in dns ~}
+%{ for ns in data.dns_servers ~}
             - ${ns}
+%{ endfor ~}
+%{ endif }
+%{ endif }
 %{ endfor ~}
 
   keyboard:
@@ -65,7 +73,9 @@ autoinstall:
         shell: /bin/bash
         lock_passwd: ${data.lock_passwd}
         passwd: ${data.password}
+%{ if contains(data.user_groups, "sudo") }
         sudo: ALL=(ALL) NOPASSWD:ALL
+%{ endif }
 %{ if data.ssh_import_ids != null }
         ssh_import_id:
 %{ for id in data.ssh_import_ids ~}

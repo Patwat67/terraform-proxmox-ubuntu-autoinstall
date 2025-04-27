@@ -21,6 +21,18 @@ locals {
       plaintext_password = local.password_map[local.user_keys[idx]]
     })
   ]
+
+  networks = [
+    for idx, net in var.vm_networks : merge(net, {
+      mac = macaddress.mac[idx].address
+    })
+  ]
+}
+
+resource "macaddress" "mac" {
+  for_each = { for idx, net in var.vm_networks : idx => net }
+
+  prefix = each.value.mac_prefix
 }
 
 
@@ -40,10 +52,7 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
         vm_keyboard_layout = var.vm_keyboard_layout
         LUKS_passphrase = var.LUKS_passphrase
 
-        ipv4 = var.vm_network.ipv4
-        gateway = var.vm_network.gateway4
-        domains = var.vm_network.dns_domains
-        dns = var.vm_network.dns_servers
+        networks = local.networks
     })
     file_name = "${var.vm_hostname}-user-data-cloud-config.yaml"
   }
@@ -52,7 +61,7 @@ resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
 
 resource "proxmox_virtual_environment_vm" "vm" {
     vm_id       = var.vm_id
-    description = "Terraform"
+    description = "Managed by Terraform"
     node_name   = var.proxmox_node
     name        = var.vm_hostname
     tags        = var.vm_tags
@@ -106,9 +115,14 @@ resource "proxmox_virtual_environment_vm" "vm" {
         size         = var.vm_hardware.disk_size
     }
 
-    network_device {
+    dynamic "network_device" {
+      for_each = local.networks
+      content {
         enabled = true
         model   = "virtio"
+        bridge = network_device.value.bridge
+        mac_address = network_device.value.mac
+      }
     }
 
     initialization {
@@ -137,7 +151,6 @@ resource "tls_private_key" "key" {
 }
 
 resource "local_sensitive_file" "info" {
-    count = 1
     content = templatefile("${path.module}/templates/info.tftpl", {
         vm_id = var.vm_id
         vm_name = var.vm_hostname
@@ -150,7 +163,6 @@ resource "local_sensitive_file" "info" {
 }
 
 resource "local_sensitive_file" "private_key" {
-  count = 1
   content = tls_private_key.key.private_key_pem
   filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/private-key.pem" : "${var.vm_information_files_dir}/${var.vm_hostname}/private-key.pem"
   file_permission = 700
@@ -167,10 +179,7 @@ resource "local_file" "cloud_config" {
         vm_keyboard_layout = var.vm_keyboard_layout
         LUKS_passphrase = var.LUKS_passphrase
 
-        ipv4 = var.vm_network.ipv4
-        gateway = var.vm_network.gateway4
-        domains = var.vm_network.dns_domains
-        dns = var.vm_network.dns_servers
+        networks = local.networks
     })
     filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/cloud-config.txt" : "${var.vm_information_files_dir}/${var.vm_hostname}/cloud-config.txt"
 }

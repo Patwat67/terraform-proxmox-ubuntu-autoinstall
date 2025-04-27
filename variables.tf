@@ -1,23 +1,3 @@
-variable "proxmox_endpoint" {
-    type = string
-    description = "The endpoint Proxmox is contactable on {https://<ip addr>:8006/}"
-    nullable = false
-}
-
-variable "proxmox_username" {
-    type = string
-    description = "The username used by the Proxmox Provider to authenticate with the API"
-    default = "root@pam"
-    nullable = false
-}
-
-variable "proxmox_password" {
-    type = string
-    description = "The password used by the Proxmox Provider to authenticate with the API"
-    sensitive = "true"
-    nullable = false
-}
-
 variable "proxmox_node" {
   type = string
   description = "The name of node to which the vm should be deployed on"
@@ -113,20 +93,26 @@ variable "datastore_id" {
   nullable = false
 }
 
-variable "vm_network" {
-  type = object({
+variable "vm_networks" {
+  type = list(object({
+    interface_name = string
     ipv4 = string
-    gateway4 = string
-    dns_servers = optional(list(string), ["8.8.8.8"])
+    gateway4 = optional(string, null)
+    bridge = string
+    dns_servers = optional(list(string), null)
     dns_domains = optional(list(string), null)
-  })
-  description = "VMs network settings, set ipv4 to 'dhcp' to automatically assign an IP"
-  default = {
+    mac_prefix = optional(list(number), [ 2 ])
+  }))
+  description = "VMs network settings, defaults to DHCP if not set"
+  default = [ {
+    interface_name = "eth0"
     ipv4 = "dhcp"
-    gateway4 = ""
-    dns_servers = [ "8.8.8.8" ]
+    gateway4 = null
+    bridge = "vmbr0"
+    dns_servers = null
     dns_domains = null
-  }
+    mac_prefix = [ 2 ]
+  } ]
   nullable = false
 }
 
