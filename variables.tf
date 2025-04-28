@@ -164,6 +164,7 @@ variable "user_data" {
       object({
         username = optional(string, "ubuntu")
         user_groups = optional(list(string), ["adm","cdrom","lpadmin","sudo","sambashare","dip","plugdev"])
+        system = optional(bool, false)
         lock_passwd = optional(bool, false)
         ssh_import_ids = optional(list(string), null)
         authorized_keys = optional(list(string), [])

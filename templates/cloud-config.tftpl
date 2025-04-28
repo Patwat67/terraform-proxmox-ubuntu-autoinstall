@@ -65,7 +65,11 @@ autoinstall:
     users:
 %{ for name, data in user-data ~}
       - name: ${data.username}
+%{ if data.system == true }
         gecos: "Terraform"
+        system: true
+        shell: /usr/sbin/nologin
+%{ else }
         primary_group: ${data.username}
 %{ if length(data.user_groups) > 0 }
         groups: ${join(",", data.user_groups)}
@@ -73,6 +77,7 @@ autoinstall:
         shell: /bin/bash
         lock_passwd: ${data.lock_passwd}
         passwd: ${data.password}
+        system: ${data.system}
 %{ if contains(data.user_groups, "sudo") }
         sudo: ALL=(ALL) NOPASSWD:ALL
 %{ endif }
@@ -86,7 +91,9 @@ autoinstall:
 %{ for key in concat(data.authorized_keys, [tls_public_key]) ~}
           - ${key}
 %{ endfor ~}
+%{ endif }
 %{ endfor ~}
+
 
   late-commands:
     - echo ${vm_name} > /target/etc/hostname
