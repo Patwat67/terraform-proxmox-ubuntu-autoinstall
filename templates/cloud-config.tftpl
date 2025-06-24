@@ -69,6 +69,9 @@ autoinstall:
         gecos: "Terraform"
         system: true
         shell: /usr/sbin/nologin
+%{ if length(data.user_groups) > 0 }
+        groups: ${join(",", data.user_groups)}
+%{ endif }
 %{ else }
         primary_group: ${data.username}
 %{ if length(data.user_groups) > 0 }
