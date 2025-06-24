@@ -154,8 +154,17 @@ resource "local_sensitive_file" "info" {
     content = templatefile("${path.module}/templates/info.tftpl", {
         vm_id = var.vm_id
         vm_name = var.vm_hostname
-        ip = proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]
-
+        ip = (
+          length(proxmox_virtual_environment_vm.vm.ipv4_addresses) > 1 &&
+          length(proxmox_virtual_environment_vm.vm.ipv4_addresses[1]) > 0
+            ? proxmox_virtual_environment_vm.vm.ipv4_addresses[1][0]
+            : (
+                length(proxmox_virtual_environment_vm.vm.ipv4_addresses) > 0 &&
+                length(proxmox_virtual_environment_vm.vm.ipv4_addresses[0]) > 0
+                  ? proxmox_virtual_environment_vm.vm.ipv4_addresses[0][0]
+                  : "0.0.0.0"
+              )
+            )
         user-data = local.user_data
     })
     filename = var.vm_information_files_dir == null ? "${path.root}/${var.vm_hostname}/info.txt" : "${var.vm_information_files_dir}/${var.vm_hostname}/info.txt"
